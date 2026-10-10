@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pomodoro Timer</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&display=swap">
+<style>
+:root{--bg:#FCE8E6;--ink:#3B0A0E;--accent:#C8232C;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+:root[data-mode="short"]{--bg:#DDF1EE;--ink:#04302D;--accent:#0E7C74}
+:root[data-mode="long"]{--bg:#E3E6FA;--ink:#14194A;--accent:#3B4BC4}
+@media (prefers-color-scheme:dark){
+:root:not([data-theme="light"]){--bg:#2B0B0E;--ink:#FFE3E0;--accent:#FF6A70}
+:root:not([data-theme="light"])[data-mode="short"]{--bg:#08211F;--ink:#D7F5F1;--accent:#3FD1C4}
+:root:not([data-theme="light"])[data-mode="long"]{--bg:#10143A;--ink:#DFE3FF;--accent:#8C9BFF}}
+:root[data-theme="dark"]{--bg:#2B0B0E;--ink:#FFE3E0;--accent:#FF6A70}
+:root[data-theme="dark"][data-mode="short"]{--bg:#08211F;--ink:#D7F5F1;--accent:#3FD1C4}
+:root[data-theme="dark"][data-mode="long"]{--bg:#10143A;--ink:#DFE3FF;--accent:#8C9BFF}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font-family:"Bricolage Grotesque",system-ui,-apple-system,"Segoe UI",sans-serif;display:flex;align-items:center;justify-content:center;transition:background .6s,color .6s}
+main{width:100%;max-width:420px;padding:20px;text-align:center}
+.tabs{display:inline-flex;gap:4px;padding:4px;border:1.5px solid color-mix(in srgb,var(--ink) 25%,transparent);border-radius:999px;margin-bottom:28px}
+.tabs button{font:inherit;font-size:.9rem;font-weight:600;color:var(--ink);background:none;border:0;padding:8px 16px;border-radius:999px;cursor:pointer}
+.tabs button[aria-selected="true"]{background:var(--accent);color:var(--bg)}
+.dial{position:relative;width:min(78vw,320px);aspect-ratio:1;margin:0 auto}
+.dial svg{width:100%;height:100%;transform:rotate(-90deg)}
+.track{fill:none;stroke:color-mix(in srgb,var(--ink) 14%,transparent);stroke-width:12}
+.bar{fill:none;stroke:var(--accent);stroke-width:12;stroke-linecap:round;transition:stroke-dashoffset .3s linear,stroke .6s}
+.read{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.time{font-size:clamp(3.4rem,17vw,5rem);font-weight:800;letter-spacing:-.03em;font-variant-numeric:tabular-nums;line-height:1}
+.label{margin-top:8px;font-size:1rem;font-weight:400;opacity:.8}
+.dots{display:flex;gap:10px;justify-content:center;margin:26px 0}
+.dots i{width:12px;height:12px;border-radius:50%;border:2px solid var(--accent);transition:background .3s}
+.dots i.on{background:var(--accent)}
+.row{display:flex;gap:12px;justify-content:center}
+.row button{font:inherit;font-weight:600;font-size:1.05rem;border-radius:14px;padding:14px 0;cursor:pointer;border:2px solid var(--accent);min-width:130px}
+#go{background:var(--accent);color:var(--bg)}
+#reset{background:none;color:var(--ink);border-color:color-mix(in srgb,var(--ink) 30%,transparent)}
+button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
+button:active{transform:scale(.97)}
+.note{min-height:1.4em;margin-top:18px;font-size:.95rem;opacity:.85}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<main>
+  <div class="tabs" role="tablist" aria-label="Timer mode">
+    <button role="tab" data-m="focus" aria-selected="true">Focus</button>
+    <button role="tab" data-m="short" aria-selected="false">Short break</button>
+    <button role="tab" data-m="long" aria-selected="false">Long break</button>
+  </div>
+  <div class="dial">
+    <svg viewBox="0 0 240 240" aria-hidden="true">
+      <circle class="track" cx="120" cy="120" r="108"/>
+      <circle class="bar" id="bar" cx="120" cy="120" r="108"/>
+    </svg>
+    <div class="read" role="timer" aria-live="off">
+      <div class="time" id="time">25:00</div>
+      <div class="label" id="label">Time to focus</div>
+    </div>
+  </div>
+  <div class="dots" id="dots" aria-label="Focus sessions completed this cycle"><i></i><i></i><i></i><i></i></div>
+  <div class="row">
+    <button id="go">Start</button>
+    <button id="reset">Reset</button>
+  </div>
+  <div class="note" id="note" aria-live="polite"></div>
+</main>
+<script>
+const MODES={focus:{mins:25,label:"Time to focus",name:"Focus"},short:{mins:5,label:"Short break",name:"Break"},long:{mins:15,label:"Long break",name:"Long break"}};
+const C=2*Math.PI*108;
+const $=id=>document.getElementById(id);
+const bar=$("bar"),timeEl=$("time"),labelEl=$("label"),go=$("go"),note=$("note");
+bar.style.strokeDasharray=C;
+let mode="focus",remaining=MODES.focus.mins*60,running=false,endAt=0,done=0,timer=null,ctx=null;
+
+function fmt(s){return String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0")}
+function render(){
+  const total=MODES[mode].mins*60;
+  timeEl.textContent=fmt(remaining);
+  labelEl.textContent=MODES[mode].label;
+  bar.style.strokeDashoffset=C*(1-remaining/total);
+  go.textContent=running?"Pause":(remaining<total?"Resume":"Start");
+  document.documentElement.dataset.mode=mode;
+  document.title=(running?fmt(remaining)+" · ":"")+MODES[mode].name;
+  document.querySelectorAll(".tabs button").forEach(b=>b.setAttribute("aria-selected",b.dataset.m===mode));
+  [...$("dots").children].forEach((d,i)=>d.classList.toggle("on",i<done));
+}
+function setMode(m){
+  stop();mode=m;remaining=MODES[m].mins*60;render();
+}
+function stop(){running=false;clearInterval(timer);timer=null}
+function start(){
+  try{ctx=ctx||new (window.AudioContext||window.webkitAudioContext)()}catch(e){}
+  running=true;endAt=Date.now()+remaining*1000;
+  note.textContent="";
+  timer=setInterval(tick,250);render();
+}
+function tick(){
+  const left=Math.max(0,Math.round((endAt-Date.now())/1000));
+  if(left!==remaining){remaining=left;render()}
+  if(left<=0)finish();
+}
+function beep(){
+  if(!ctx)return;
+  [0,.25,.5].forEach(t=>{
+    const o=ctx.createOscillator(),g=ctx.createGain();
+    o.frequency.value=880;o.connect(g);g.connect(ctx.destination);
+    const s=ctx.currentTime+t;
+    g.gain.setValueAtTime(.001,s);g.gain.exponentialRampToValueAtTime(.25,s+.02);g.gain.exponentialRampToValueAtTime(.001,s+.2);
+    o.start(s);o.stop(s+.22);
+  });
+}
+function finish(){
+  stop();beep();
+  let msg;
+  if(mode==="focus"){
+    done++;
+    mode=done>=4?"long":"short";
+    msg=done>=4?"Four sessions done. Take a long break.":"Focus session done. Take a short break.";
+  }else{
+    if(mode==="long")done=0;
+    mode="focus";msg="Break over. Ready for the next focus session.";
+  }
+  remaining=MODES[mode].mins*60;
+  render();note.textContent=msg;
+}
+go.onclick=()=>running?(stop(),render()):start();
+$("reset").onclick=()=>{stop();remaining=MODES[mode].mins*60;note.textContent="";render()};
+document.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>{note.textContent="";setMode(b.dataset.m)});
+render();
+</script>
+</body>
+</html>
